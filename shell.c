@@ -11,7 +11,8 @@
 
 char* getSysInfo(char* user, char* host, char* cwd, size_t bufsiz);
 builtin getBuiltin(const char* command);
-int runBuiltin(builtin bi, char* commandArgs[]);
+void logTextAndTokens(char* text, char* toks[], int tokenCount);
+int runBuiltin(builtin bi, char* commandArgs[], int commandArgsCount);
 bool commandExists(const char* command);
 int runCommand(char* commandArgs[]);
 
@@ -37,11 +38,12 @@ int main(int argc, char* argv[])
 
         //// clean text
         size_t len = strnlen(buf, BUFSIZE);
-        text = trimWhitespace(buf, len);
+        text = (char*)trimWhitespace(buf, len);
         len = strnlen(text, len);
 
         //// get tokens
         tokenCount = getTokenCount(text, len);
+        tokenCount = (tokenCount == 0) ? 1 : tokenCount;
         tokens = (char**)malloc(sizeof(char*) * tokenCount);
         NULLCHECK(tokens);
         char** toks = splitTextToTokens(text, len, tokens, tokenCount);
@@ -49,7 +51,7 @@ int main(int argc, char* argv[])
         //// process tokens/commands
         builtin bi = getBuiltin(toks[0]);
         if (bi) {
-            ERRCHECK(runBuiltin(bi, &(toks[1])));
+            ERRCHECK(runBuiltin(bi, &(toks[1]), tokenCount - 1));
         }
         else if (commandExists(toks[0])) {
             ERRCHECK(runCommand(toks));
@@ -90,21 +92,40 @@ builtin getBuiltin(const char* command)
     }
 }
 
-int runBuiltin(builtin bi, char* commandArgs[])
+void logTextAndTokens(char* text, char* toks[], int tokenCount) {
+    printf("text: %s\n", text);
+    printf("token count: %d\n", tokenCount);
+    for (size_t i = 0; i < tokenCount; i++)
+    {
+        printf("token %zu: %s\n", i, toks[i]);
+    }
+}
+
+int runBuiltin(builtin bi, char* commandArgs[], int commandArgsCount)
 {
     switch (bi)
     {
     case EXEC:
-        return execv(commandArgs[0], commandArgs);
+        if (commandArgsCount < 1) {
+            printf("error: no arguments provided to exec, when at least one is required.");
+            return -1;
+        } else {
+            return execv(commandArgs[0], commandArgs);
+        }
     case EXIT:
-        if (commandArgs[0] != NULL) {
+        if (commandArgsCount > 0) {
             printf("error: arguments provided to exit, when none are allowed.");
             return -1;
         } else {
             exit(0);
         }
     case CD:
-        return chdir(commandArgs[0]);
+        if (commandArgsCount < 1) {
+            printf("error: no arguments provided to cd, when at least one is required.");
+            return -1;
+        } else {
+            return chdir(commandArgs[0]);
+        }
     default:
         return -1;
     }

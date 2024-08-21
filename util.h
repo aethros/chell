@@ -8,7 +8,7 @@
 
 typedef struct addrPair
 {
-    void* start;
+    const void* start;
     ptrdiff_t endOffset;
 } addrPair_t;
 
@@ -44,11 +44,11 @@ addrPair_t trimAlgorithm(const char* str, size_t len)
     return pair;
 }
 
-char* trimWhitespace(const char* str, size_t len)
+const char* trimWhitespace(const char* str, size_t len)
 {   
     addrPair_t pair = trimAlgorithm(str, len);
     ((char* const)pair.start)[pair.endOffset + 1] = '\0';
-    return pair.start;
+    return (const char*)pair.start;
 }
 
 // this can only be run on trimmed strings!
@@ -74,7 +74,7 @@ char** splitTextToTokens(char* text, size_t len, char** tokens, int tokenCount)
     size_t i_stop = 0;
     size_t text_i;
     for (size_t token_i = 1; token_i <= tokenCount; token_i++) { // continue til you run out of tokens
-        for (text_i = i_stop; text[text_i] != '\0' && text_i < len; text_i++) { // continue til you run of out len or hit null byte
+        for (text_i = i_stop; text[text_i] != '\0' && text_i < len; text_i++) { // continue til you run of out len or hit null byte (happens as you handle each token)
             if (text[text_i] == ' ') { // if current char is space
                 toks[token_i] = &(text[text_i + 1]); // move ptr after space.
                 if (toks[token_i][0] != ' ') { // if there's no more space after move
