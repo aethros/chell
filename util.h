@@ -3,87 +3,49 @@
 
 #include <stdio.h> // size_t
 #include <stdbool.h> // bool
-#include <string.h> //strlen
+#include <string.h> // strlen
 #include <stddef.h> // ptrdiff_t
 
-typedef struct addrPair
-{
-    const void* start;
-    ptrdiff_t endOffset;
-} addrPair_t;
-
+/// @brief Enum to represent built-in commands.
 typedef enum builtin {
-    NO_BUILTIN = 0,
-    EXIT = 1,
-    EXEC = 2,
-    CD = 3
+    NO_BUILTIN = 0, // No builtin command
+    EXIT = 1, // Exit the shell
+    EXEC = 2, // Execute a command
+    CD = 3  // Change directory
 } builtin;
 
-bool isSpace(char c)
+/// @brief Function which counts the number of tokens in a c-string.
+/// NOTE: This can only be run on trimmed strings!
+/// @param text Text to count tokens in.
+/// @param delim Delimiter to split text on.
+/// @param len Length of the text.
+/// @return Number of tokens in the text.
+size_t getTokenCount(const char* text, char delim, size_t len)
 {
-    return (c == 0x20   // ' '  space
-            //              or
-         || c == 0x09   // '/t' tab
-         || c == 0x0A   // '/v' vertical tab
-         || c == 0x0B   // '/r' carriage return
-         || c == 0x0C   // '/f' form feed
-         || c == 0x0D); // '/n' new line
-}
-
-addrPair_t trimAlgorithm(const char* str, size_t len)
-{   
-    addrPair_t pair;
-    const char* start = str;
-    const char* end = str + len - 2; // end is length minus one (zero indexed) minus one more for null byte
-    while (isSpace(*start)) { start++; } // move start ptr forward
-    pair.start = start;
-    pair.endOffset = end - start;
-    if (*start == 0) { return pair; } // return if null
-    while (end > start && isSpace(*end)) { end--; } // move end ptr backward
-    pair.endOffset = end - start;
-    return pair;
-}
-
-const char* trimWhitespace(const char* str, size_t len)
-{   
-    addrPair_t pair = trimAlgorithm(str, len);
-    ((char* const)pair.start)[pair.endOffset + 1] = '\0';
-    return (const char*)pair.start;
-}
-
-// this can only be run on trimmed strings!
-int getTokenCount(const char* text, size_t len)
-{
+    const char* start = text;
     if(*text == 0) { return 0; }
-    int tokenCount = 1; // there is always atleast 1 token unless text is null
-    for (size_t i = 0; text[i] != '\0' && i < len; i++) {
-        if (text[i] == ' ') {
-            while (i+1 <= len && (text[i+1] == ' ' || text[i+1] == '\0')) {
-                i++; // scan until next non-null, non space byte
-            }
-            tokenCount++;
-        }
+    size_t count = (*start != delim) ? 1 : 0;
+    while((text = strchr(text, delim)) != NULL && text < start + len) {
+        if (*(++text) != delim && *text != '\0') { count++; }
     }
-    return tokenCount;
+    return count;
 }
 
-char** splitTextToTokens(char* text, size_t len, char** tokens, int tokenCount)
+/// @brief Takes a c-string and splits it into tokens based on spaces.
+/// @param text Input text to split.
+/// @param delim Delimiter to split text on.
+/// @param tokens Pre-allocated array of pointers to store tokens.
+/// @param tokenCount Predefined number of tokens to split text into.
+/// @return Pointer to the array of token pointers.
+char** splitTextToTokens(char* text, char delim, char** tokens, size_t count)
 {
     char** toks = tokens;
-    toks[0] = text; // first ptr is the beginning of text, since the first token is at beginning of text
-    size_t i_stop = 0;
-    size_t text_i;
-    for (size_t token_i = 1; token_i <= tokenCount; token_i++) { // continue til you run out of tokens
-        for (text_i = i_stop; text[text_i] != '\0' && text_i < len; text_i++) { // continue til you run of out len or hit null byte (happens as you handle each token)
-            if (text[text_i] == ' ') { // if current char is space
-                toks[token_i] = &(text[text_i + 1]); // move ptr after space.
-                if (toks[token_i][0] != ' ') { // if there's no more space after move
-                    token_i++; // increment iterator
-                    text[text_i] = '\0'; // add null byte to previous string
-                }
-            }
-        }
-        i_stop = text_i; // keep place of where you stopped
+    char* saveptr = NULL;
+    toks[0] = strtok_r(text, &delim, &saveptr);
+    for (size_t i = 1; i < count; i++)
+    {
+        toks[i] = strtok_r(NULL, &delim, &saveptr);
+        if (toks[i] == NULL) { break; }
     }
     return toks;
 }
