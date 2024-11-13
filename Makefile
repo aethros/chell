@@ -1,6 +1,6 @@
 .PHONY: clean
 
-CFLAGS = -Wall -Wextra -Wno-unused-parameter -Werror -Wpedantic --std=c11 -g --debug -fdiagnostics-absolute-paths
+CFLAGS = -Wall -Wextra -Werror -Wpedantic --std=gnu11 -g --debug #-DDEBUG=TRUE
 
 all: shell test
 

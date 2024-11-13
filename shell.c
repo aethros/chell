@@ -1,96 +1,127 @@
 #include <stdio.h> // printf, size_t
-#include <errno.h> // errno
 #include <stdlib.h> // malloc
-#include <unistd.h> // getcwd
-#include <pwd.h> // getpwuid_r
+#include <sys/types.h> // waitpid
+#include <sys/wait.h> // waitpid
 #include "util.h"
 
-#define BUFSIZE 1024
-#define NULLCHECK(PTR)    if (PTR  == NULL)  {printf("\nerror: null ptr exception\n"); exit(EXIT_FAILURE);}
-#define ERREQZERO(CODE)   do {int code = CODE; if (code == 0) {printf("\nerror: function exception\n"); printf("%s\n", strerror(errno)); exit(code);}} while (false);
-#define ERRNEQZERO(CODE)  do {int code = CODE; if (code != 0) {printf("\nerror: function exception\n"); printf("%s\n", strerror(errno)); exit(code);}} while (false);
-#define PRTCHECK(CODE)    do {int code = CODE; if (code <  0) {printf("\nerror: printf exception\n"); exit(code);}} while (false);
-#define BUFFALLOC         (char*)malloc(sizeof(char) * BUFSIZE)
-
-char* getSysInfo(struct passwd* pw, char* host, char* cwd, size_t bufsiz, char* buf, struct passwd** result);
+#if defined(DEBUG)
+    void logTextAndTokens(char* text, char* toks[], size_t count);
+#endif // DEBUG
+void printPrompt(struct passwd pw, const char* const pw_buf, const char *host, const char *cwd, size_t bufsiz, const struct passwd *result);
+const char* getInput(char* const buf, size_t sz);
+const char** getTokens(const char* text, const char** tokens, char delim, size_t* count);
 builtin getBuiltin(const char* cmd);
-void logTextAndTokens(char* text, char* toks[], size_t count);
-int runBuiltin(builtin bi, char* argv[], int argc);
-bool commandExists(char* cmd, char** path_buf);
-int runCommand(const char* cmd, char* argv[], int argc);
+int runBuiltin(builtin bi, char* const argv[], int argc);
+bool commandExists(const char* cmd, const char** path_buf);
+int runCommand(const char* cmd, char* const argv[], int argc);
 
 /// @brief Main function for the shell.
 /// @param argc The number of arguments.
 /// @param argv The arguments.
 /// @return The exit code of the shell.
-int main(int argc, char* argv[])
+int main(void)
 {
     // allocate/init memory
-    char** tokens = NULL;
+    const char** tokens = NULL;
     size_t count = 0;
     struct passwd pw = {0};
-    struct passwd *result = NULL;
-    char* pw_buf  = BUFFALLOC;     NULLCHECK(pw_buf);
-    char* host    = BUFFALLOC;     NULLCHECK(host);
-    char* cwd     = BUFFALLOC;     NULLCHECK(cwd);
-    char* buf     = BUFFALLOC;     NULLCHECK(buf);
+    const struct passwd* result = NULL;
+    char* const pw_buf  = BUFFALLOC();     NULLCHECK(pw_buf);
+    const char* host    = BUFFALLOC();     NULLCHECK(host);
+    const char* cwd     = BUFFALLOC();     NULLCHECK(cwd);
+    char* const buf     = BUFFALLOC();     NULLCHECK(buf);
 
     // main loop
     do
     {   // get info/print prompts
-        char* wrkdir = getSysInfo(&pw, host, cwd, BUFSIZE, pw_buf, &result);
-        NULLCHECK(result);
-        PRTCHECK(printf("%s@%s:%s $ ", result->pw_name, host, wrkdir));
+        printPrompt(pw, pw_buf, host, cwd, BUFSIZ, result);
 
         // Get string
-        char* text = fgets(buf, BUFSIZE, stdin);
-        NULLCHECK(text);
+        const char* text = getInput(buf, BUFSIZE);
 
         // get tokens
-        count = getTokenCount(text, ' ', strlen(text));
-        count = (count == 0) ? 1 : count;
+        const char** toks = getTokens(text, tokens, ' ', &count);
+        #if defined(DEBUG)
+            logTextAndTokens((char*)text, (char**)toks, count);
+        #endif // DEBUG
+
+        // setup cmd and args
         size_t args_c = count - 1;
-        tokens = (char**)malloc(sizeof(char*) * count);
-        NULLCHECK(tokens);
-        char** toks = splitTextToTokens(text, ' ', tokens, count);
-        char* cmd = toks[0];
-        char** args = &(toks[1]);
-        char* path_buf = BUFFALLOC;
+        const char* cmd = toks[0];
+        const char* const* args = &(toks[1]);
+        const char* path_buf = BUFFALLOC();
         NULLCHECK(path_buf);
+        #if defined(DEBUG)
+            printf("cmd: %s\n", cmd);
+            printf("args count: %zu\n", args_c);
+            fflush(stdout);
+        #endif // DEBUG
 
         // process tokens/commands
         builtin bi = getBuiltin(cmd);
         if (bi) {
-            ERRNEQZERO(runBuiltin(bi, args, args_c));
-        }
-        else if (commandExists(cmd, &path_buf)) {
-            ERRNEQZERO(runCommand(path_buf, args, args_c));
+            ERRNEQZERO(runBuiltin(bi, (char *const *)args, args_c), "runBuiltin");
+        } else if (commandExists(cmd, &path_buf)) {
+            // checks if the command exists in the PATH
+            // if it does, path_buf will contain the full path to the command
+            ERRLEQZERO(runCommand(path_buf, (char *const *)args, args_c), "runCommand"); // sends the full path buffer to runCommand
         } else {
-            PRTCHECK(printf("\nshell: %s: command not found\n", cmd));
+            ERRLEQZERO(printf("\nshell: %s: command not found\n", cmd), "printf");
+            fflush(stdout);
         }
         
-        free(tokens); free(path_buf);
+        free((void*)tokens); free((void*)path_buf);
     } while (tokens != NULL);
     
     // free memory
-    free(buf); free(pw_buf); free(host); free(cwd);
+    free((void*)buf); free((void*)pw_buf); free((void*)host); free((void*)cwd);
     return EXIT_SUCCESS;
 }
 
-/// @brief Gets the user, host, and current working directory of the system for the prompt.
-/// @param pw Pointer to a string to store the user information.
-/// @param host Pointer to a string to store the host information.
-/// @param cwd  Pointer to a string to store the current working directory information.
-/// @param bufsiz Size of the buffer which can store information.
-/// @return Pointer to the current working directory.
-char* getSysInfo(struct passwd* pw, char* host, char* cwd, size_t bufsiz, char* buf, struct passwd** result)
-{
-    uid_t uid = getuid();
-    ERRNEQZERO(getpwuid_r(uid, pw, buf, bufsiz, result));
-    ERRNEQZERO(gethostname(host, bufsiz));
-    char* workingdir = getcwd(cwd, bufsiz);
-    NULLCHECK(workingdir);
-    return workingdir;
+/// @brief Function which logs the text and tokens in a c-string.
+#if defined(DEBUG)
+    void logTextAndTokens(char* text, char* toks[], size_t count) {
+        printf("text: %s\n", text);
+        printf("token count: %zu\n", count);
+        for (size_t i = 0; i < count; i++)
+        {
+            printf("token %zu: %s\n", i, toks[i]);
+        }
+    }
+    fflush(stdout);
+#endif // DEBUG
+
+/// @brief Prints the prompt for the shell.
+/// @param pw The password struct.
+/// @param pw_buf The buffer to store the password.
+/// @param host The host name buffer.
+/// @param cwd The current working directory buffer.
+/// @param bufsiz The size of the buffer.
+/// @param result The result of the getpwuid_r function.
+/// @return void
+void printPrompt(struct passwd pw, const char* const pw_buf, const char *host, const char *cwd, size_t bufsiz, const struct passwd *result) {
+    const char* wrkdir = getSysInfo(((const struct passwd* const)(&pw)), host, cwd, bufsiz, pw_buf, &result);
+    NULLCHECK(result);
+    ERRLEQZERO(printf(PROMPT_STRING, result->pw_name, host, wrkdir), "printf");
+    fflush(stdout);
+}
+
+/// @brief Gets input from the user.
+/// @param buf Buffer to store the input. 
+/// @param sz Size of the buffer.
+/// @return Pointer to the input.
+const char* getInput(char* const buf, size_t sz) {
+    char* text = fgets(buf, (int)sz, stdin);
+    NULLCHECK(text);
+    text[strcspn(text, "\n")] = 0; // remove trailing \n from input (it will throw errors if present)
+    return text;
+}
+
+const char** getTokens(const char* text, const char** tokens, char delim, size_t* count) {
+    *count = getTokenCount(text, delim, strlen(text));
+    tokens = generateTokenArray(*count);
+    const char** const toks = splitTextToTokens(text, delim, tokens, *count);
+    return toks;
 }
 
 /// @brief Parses a string to determine if it is a builtin command.
@@ -111,21 +142,12 @@ builtin getBuiltin(const char* cmd)
     }
 }
 
-void logTextAndTokens(char* text, char* toks[], size_t count) {
-    printf("text: %s\n", text);
-    printf("token count: %zu\n", count);
-    for (size_t i = 0; i < count; i++)
-    {
-        printf("token %zu: %s\n", i, toks[i]);
-    }
-}
-
 /// @brief Function which runs a builtin command.
 /// @param bi Builtin command to run. 
 /// @param argv Arguments to the builtin command.
 /// @param argc Number of arguments to the builtin command.
 /// @return Exit code of the builtin command.
-int runBuiltin(builtin bi, char* argv[], int argc)
+int runBuiltin(builtin bi, char* const argv[], int argc)
 {
     switch (bi)
     {
@@ -135,6 +157,15 @@ int runBuiltin(builtin bi, char* argv[], int argc)
             return -1;
         } else {
             const char* exec_cmd = argv[0];
+            #if defined(DEBUG)
+                printf("executing: %s\n", exec_cmd);
+                printf("args count: %d\n", argc);
+                for (int i = 0; i < argc; i++)
+                {
+                    printf("arg %d: %s\n", i, argv[i]);
+                }
+                fflush(stdout);
+            #endif // DEBUG
             return execv(exec_cmd, argv);
         }
     case EXIT:
@@ -160,30 +191,39 @@ int runBuiltin(builtin bi, char* argv[], int argc)
 /// @param cmd Command to check.
 /// @param path_buf Buffer to store the path of the command.
 /// @return True if the command exists, false otherwise.
-bool commandExists(char* cmd, char** path_buf)
+bool commandExists(const char* cmd, const char** path_buf)
 {
+    // if the command is a full path, check if it exists
     if (strchr(cmd, '/') != NULL && access(cmd, F_OK) == 0) {
         *path_buf = cmd;
-        return true;
+        return true; // return true if the full path'd command exists
     }
-    char** tokens = NULL;
-    char* path = getenv("PATH");
+
+    // Get the PATH
+    const char** tokens = NULL;
+    const char* path = getenv("PATH");
     NULLCHECK(path);
-    size_t count = getTokenCount(path, ':', strlen(path));
-    count = (count == 0) ? 1 : count;
-    tokens = (char**)malloc(sizeof(char*) * count);
-    NULLCHECK(tokens);
-    char** toks = splitTextToTokens(path, ':', tokens, count);
+    size_t count = 0;
+    const char** toks = getTokens(path, tokens, ':', &count);
     NULLCHECK(toks);
+    #if defined(DEBUG)
+        logTextAndTokens((char*)path, (char**)toks, count);
+    #endif // DEBUG
+
+    // Check if the command exists in the PATH
     for (size_t i = 0; i < count; i++)
     {
-        snprintf(*path_buf, BUFSIZ, "%s/%s", toks[i], cmd);
+        snprintf((char*)(*path_buf), BUFSIZ, "%s/%s", toks[i], cmd);
+        #if defined(DEBUG)
+            printf("checking: %s\n", *path_buf);
+            fflush(stdout);
+        #endif // DEBUG
         if (access(*path_buf, F_OK) == 0) {
-            free(tokens);
+            free((void*)tokens);
             return true;
         }
     }
-    free(tokens);
+    free((void*)tokens);
     return false;
 }
 
@@ -192,10 +232,10 @@ bool commandExists(char* cmd, char** path_buf)
 /// @param argv Arguments to the command.
 /// @param argc Number of arguments to the command.
 /// @return Exit code of the command.
-int runCommand(const char* cmd, char* argv[], int argc)
+int runCommand(const char* cmd, char* const argv[], int argc)
 {
     pid_t childpid = fork();
-    ERRNEQZERO(childpid);
+    ERRLEQZERO(childpid, "fork");
     
     if(childpid == 0) {
         // Child process
@@ -203,12 +243,22 @@ int runCommand(const char* cmd, char* argv[], int argc)
             printf("error: no arguments provided to command, when at least one is required.");
             return -1;
         } else {
+            #if defined(DEBUG)
+                printf("executing: %s\n", cmd);
+                printf("args count: %d\n", argc);
+                for (int i = 0; i < argc; i++)
+                {
+                    printf("arg %d: %s\n", i, argv[i]);
+                }
+                fflush(stdout);
+            #endif // DEBUG
+            
             return execv(cmd, argv);
         }
     } else {
         // Parent process
         int status = 0;
-        ERREQZERO(waitpid(childpid, &status, WEXITED));
+        ERR_EQZERO(waitpid(childpid, &status, WEXITED), "waitpid");
         if (WIFEXITED(status)) {
             return WEXITSTATUS(status);
         } else {
