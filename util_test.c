@@ -1,20 +1,19 @@
 #include "util.h"
 
-void run_test_TokenCount(char* text, size_t length, size_t expected)
-{
+void run_test_TokenCount(char* text, size_t length, size_t expected) {
     size_t actual = getTokenCount(text, ' ', length);
-    if (expected == actual)
-    {
+    if (expected == actual) {
         printf("token test passed!\n");
-    }
-    else
-    {
-        printf("token test failed on string: %s\nexpected: %zu, actual: %zu\n\n", text, expected, actual);
+    } else {
+        printf(
+            "token test failed on string: %s\nexpected: %zu, actual: %zu\n\n",
+            text,
+            expected,
+            actual);
     }
 }
 
-void test_getTokenCount()
-{
+void test_getTokenCount(void) {
     // case 1:
     char* text = "char* str";
     int len = 10;
@@ -46,7 +45,7 @@ void test_getTokenCount()
     run_test_TokenCount(text5, len5, 3);
 }
 
-int main(void){
+int main(void) {
     test_getTokenCount();
     return 0;
 }

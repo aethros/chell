@@ -1,22 +1,58 @@
 #ifndef util_h
 #define util_h
 
-#include <stdio.h> // size_t
-#include <stdbool.h> // bool
-#include <string.h> // strlen, strtok_r
-#include <stddef.h> // ptrdiff_t
-#include <stdlib.h> // exit
-#include <errno.h> // errno
-#include <pwd.h> // getpwuid_r
-#include <unistd.h> // getcwd
+#include <errno.h>    // errno
+#include <pwd.h>      // getpwuid_r, struct passwd, uid_t
+#include <stdbool.h>  // bool, false
+#include <stdio.h>    // fprintf, printf, stdout, size_t, fgets, fflush, snprintf
+#include <stdlib.h>   // exit, malloc, free, EXIT_FAILURE, exit, getenv, strndup
+#include <string.h>   // strlen, strtok_r, strerror, strchr, strrchr, strndup
+#include <unistd.h>   // getcwd, getuid, gethostname
 
 #define PROMPT_STRING "%s@%s:%s $ "
-#define BUFSIZE 1024
-#define NULLCHECK(PTR)           if (PTR == NULL)  {printf("\nerror: null ptr exception\n"); exit(EXIT_FAILURE);}
-#define ERR_EQZERO(CODE, NAME)   do {int code = CODE; if (code == 0) {printf("\nerror: function exception - %s\n", NAME); printf("%s\n", strerror(errno)); exit(code);}} while (false);
-#define ERRNEQZERO(CODE, NAME)   do {int code = CODE; if (code != 0) {printf("\nerror: function exception - %s\n", NAME); printf("%s\n", strerror(errno)); exit(code);}} while (false);
-#define ERRLEQZERO(CODE, NAME)   do {int code = CODE; if (code <  0) {printf("\nerror: function exception - %s\n", NAME); printf("%s\n", strerror(errno)); exit(code);}} while (false);
-#define BUFFALLOC()              (char*)malloc(sizeof(char) * BUFSIZE)
+#define BUFSIZE 8192
+#define BUFFALLOC() (char *)malloc(sizeof(char) * BUFSIZE)
+#define LOG(MSG, ...) fprintf(stdout, MSG __VA_OPT__(,) __VA_ARGS__);
+
+#define ERRNEQZERO(CODE, NAME)                                  \
+    do {                                                        \
+        int code = CODE;                                        \
+        if (code != 0) {                                        \
+            printf("\nerror: function exception - %s\n", NAME); \
+            printf("%s\n", strerror(errno));                    \
+            exit(code);                                         \
+        }                                                       \
+    } while (false);
+
+#define ERRLEQZERO(CODE, NAME)                                  \
+    do {                                                        \
+        int code = CODE;                                        \
+        if (code <  0) {                                        \
+            printf("\nerror: function exception - %s\n", NAME); \
+            printf("%s\n", strerror(errno));                    \
+            exit(code);                                         \
+        }                                                       \
+    } while (false);
+
+#define NULLCHECK(PTR)                                          \
+    do {                                                        \
+        if (PTR == NULL) {                                      \
+            printf("\nerror: null ptr exception\n");            \
+            exit(EXIT_FAILURE);                                 \
+        }                                                       \
+    } while (false);
+
+#define __FILENAME__                                            \
+    (strrchr(__FILE__, '/')                                     \
+        ? strrchr(__FILE__, '/') + 1                            \
+        : __FILE__)
+
+#define LOGDBG(MSG, ...)                                        \
+    do {                                                        \
+        LOG("(%10s:%3d) %20s : ",                               \
+            __FILENAME__, __LINE__, __FUNCTION__);              \
+        LOG(MSG __VA_OPT__(,) __VA_ARGS__);                     \
+    } while (false);
 
 /// @brief Enum to represent built-in commands.
 typedef enum builtin {
@@ -27,15 +63,23 @@ typedef enum builtin {
 } builtin;
 
 /// @brief Gets the user, host, and current working directory of the system for the prompt.
-/// @param pw Pointer to a string to store the user information.
+/// @param pw Pointer to struct passwd to store the user information.
 /// @param host Pointer to a string to store the host information.
 /// @param cwd  Pointer to a string to store the current working directory information.
 /// @param bufsiz Size of the buffer which can store information.
+/// @param pw_buf Buffer for getpwuid_r to use.
+/// @param result Pointer to store the result of getpwuid_r.
 /// @return Pointer to the current working directory.
-const char* getSysInfo(const struct passwd* const pw, const char* host, const char* cwd, size_t bufsiz, const char* pw_buf, const struct passwd** result)
+const char* getSysInfo(
+    struct passwd* pw,
+    const char* host,
+    const char* cwd,
+    size_t bufsiz,
+    char* pw_buf,
+    struct passwd** result)
 {
     uid_t uid = getuid();
-    ERRNEQZERO(getpwuid_r(uid, (struct passwd*)pw, (char*)pw_buf, bufsiz, (struct passwd**)result), "getpwuid_r");
+    ERRNEQZERO(getpwuid_r(uid, pw, pw_buf, bufsiz, result), "getpwuid_r");
     ERRNEQZERO(gethostname((char*)host, bufsiz), "gethostname");
     const char* workingdir = getcwd((char*)cwd, bufsiz);
     NULLCHECK(workingdir);
@@ -46,9 +90,25 @@ const char* getSysInfo(const struct passwd* const pw, const char* host, const ch
 /// @param count Number of token pointers to generate.
 /// @return Pointer to the array of token pointers.
 const char** generateTokenArray(size_t count) {
-    const char** tokens = (const char**)malloc(sizeof(const char**) * (count + 1));  // add one to count for null terminator
+    const char** tokens = (const char**)malloc(sizeof(const char**) * (count + 1));
+    // add one to count for null terminator
     NULLCHECK(tokens);
+    // Initialize all elements to NULL to avoid garbage values
+    for (size_t i = 0; i <= count; i++) {
+        tokens[i] = NULL;
+    }
     return tokens;
+}
+
+/// @brief Frees an array of tokens and their individual strings.
+/// @param tokens Array of token pointers to free.
+/// @param count Number of tokens in the array.
+void freeTokenArray(const char** tokens, size_t count) {
+    if (tokens == NULL) return;
+    for (size_t i = 0; i < count && tokens[i] != NULL; i++) {
+        free((void*)tokens[i]);
+    }
+    free((void*)tokens);
 }
 
 /// @brief Function which counts the number of tokens in a c-string.
@@ -73,21 +133,43 @@ size_t getTokenCount(const char* text, char delim, size_t len)
 /// @param text Input text to split.
 /// @param delim Delimiter to split text on.
 /// @param tokens Pre-allocated array of pointers to store tokens.
-/// @param tokenCount Predefined number of tokens to split text into.
+/// @param strln Length of the input text.
+/// @param count Predefined number of tokens to split text into.
 /// @return Pointer to the array of token pointers.
-const char** splitTextToTokens(const char* const text, const char delim, const char** tokens, size_t count)
+const char** splitTextToTokens(
+    const char* const text,
+    const char delim,
+    const char** tokens,
+    size_t strln,
+    size_t count)
 {
     const char** toks = tokens;
     char* saveptr = NULL;
-    toks[0] = strtok_r((char*)text, &delim, &saveptr);
-    if (toks[0] == NULL) {  toks[0] = text; }
-    
+    char* txcpy = strndup(text, strln);
+    NULLCHECK(txcpy);
+
+    // Create delimiter string from char
+    char delim_str[2] = {delim, '\0'};
+
+    // Get first token
+    const char* token = strtok_r(txcpy, delim_str, &saveptr);
+    if (token == NULL) {
+        toks[0] = strndup(text, strln); 
+    } else {
+        toks[0] = strndup(token, strlen(token));
+    }
+
+    // Get subsequent tokens
     for (size_t i = 1; i < count; i++)
     {
-        toks[i] = strtok_r(NULL, &delim, &saveptr);
-        if (toks[i] == NULL) { break; }
+        token = strtok_r(NULL, delim_str, &saveptr);
+        if (token == NULL) { break; }
+        toks[i] = strndup(token, strlen(token));
     }
+
+    // Null-terminate tokens
     toks[count] = NULL;
+    free(txcpy);
     return toks;
 }
 
