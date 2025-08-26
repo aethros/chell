@@ -1,4 +1,4 @@
 .vscode
 .devcontainer
-build
+.build
 .DS_Store
